@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ==========================================
+   CSS KHUSUS CETAK STRUK THERMAL
+   ========================================== */
+@media print {
+  /* 1. Sembunyikan semua elemen di luar area nota */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* 2. Tampilkan hanya elemen struk dan isinya */
+  #printable-receipt,
+  #printable-receipt * {
+    visibility: visible !important;
+  }
+
+  /* 3. Paksa posisi nota ke sudut kiri atas kertas */
+  #printable-receipt {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* 4. Optimasi warna teks agar kontras tajam di printer thermal */
+  #printable-receipt * {
+    color: #000000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  /* 5. Ukuran Kertas Thermal (Default: 58mm) */
+  @page {
+    size: 58mm auto; /* Ganti ke '80mm auto' jika memakai printer thermal lebar 80mm */
+    margin: 0;
+  }
+}
