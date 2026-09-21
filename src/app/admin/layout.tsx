@@ -25,7 +25,14 @@ export default function AdminLayout({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
+
+  // Mengambil huruf depan nama/email untuk avatar inisial
+  const userInitial = user?.name 
+    ? user.name.charAt(0).toUpperCase() 
+    : user?.email 
+    ? user.email.charAt(0).toUpperCase() 
+    : "A";
 
   // Daftar seluruh menu admin beserta icon-nya
   const menuItems = [
@@ -68,6 +75,7 @@ export default function AdminLayout({
       title: "Karyawan & RBAC",
       href: "/admin/users",
       icon: Users,
+      adminOnly: true, // Khusus Admin
     },
     {
       title: "Pengaturan Toko",
@@ -75,6 +83,14 @@ export default function AdminLayout({
       icon: Settings,
     },
   ];
+
+  // Saring menu: Sembunyikan menu 'adminOnly' jika role pengguna bukan Admin
+  const visibleMenuItems = menuItems.filter((item) => {
+    if (item.adminOnly) {
+      return user?.role === "Admin";
+    }
+    return true;
+  });
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-slate-100 font-sans">
@@ -88,7 +104,9 @@ export default function AdminLayout({
             height={32}
             className="rounded-lg object-cover"
           />
-          <span className="font-bold text-lg text-white">LALA LAUNDRY</span>
+          <div className="flex flex-col">
+            <span className="font-bold text-lg text-white leading-none">SISTEM LAUNDRY</span>
+          </div>
         </div>
         <button
           onClick={() => setIsOpen(!isOpen)}
@@ -108,7 +126,7 @@ export default function AdminLayout({
 
       {/* 3. Sidebar Utama (Slide-over di HP & Permanent di Desktop) */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#12185e]  flex flex-col justify-between shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#12185e] flex flex-col justify-between shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -123,7 +141,9 @@ export default function AdminLayout({
                 height={32}
                 className="rounded-lg object-cover"
               />
-              <span className="font-bold text-lg text-white">LALA LAUNDRY</span>
+              <div className="flex flex-col">
+                <span className="font-bold text-lg text-white leading-none">SISTEM LAUNDRY</span>
+              </div>
             </div>
             {/* Tombol Tutup Tambahan khusus Mobile */}
             <button
@@ -134,9 +154,9 @@ export default function AdminLayout({
             </button>
           </div>
 
-          {/* Navigasi Menu */}
+          {/* Navigasi Menu Terfilter */}
           <nav className="space-y-1">
-            {menuItems.map((item) => {
+            {visibleMenuItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
 
@@ -144,7 +164,7 @@ export default function AdminLayout({
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={() => setIsOpen(false)} // Otomatis menutup sidebar saat menu diklik di HP
+                  onClick={() => setIsOpen(false)}
                   className={`flex items-center space-x-3 px-4 py-2.5 rounded-lg transition-colors ${
                     isActive
                       ? "bg-sky-600 text-white font-medium"
@@ -171,8 +191,31 @@ export default function AdminLayout({
         </div>
       </aside>
 
-      {/* 4. Area Konten Utama */}
-      <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
+      {/* 4. Area Konten Utama & Top Header User Aktif */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        <header className="bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+          <div className="text-xs font-medium text-slate-400">
+            Panel Kasir & Admin
+          </div>
+
+          {/* Profil User Aktif */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+              {userInitial}
+            </div>
+            <div className="flex flex-col text-right">
+              <span className="text-sm font-semibold text-slate-800 leading-tight">
+                {user?.name || user?.email || "Admin"}
+              </span>
+              <span className="text-[11px] text-slate-500 capitalize">
+                {user?.role || "Petugas"}
+              </span>
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1">{children}</main>
+      </div>
     </div>
   );
 }

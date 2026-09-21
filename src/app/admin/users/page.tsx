@@ -2,11 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { db, firebaseConfig } from "@/lib/firebase";
-import { collection, query, updateDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { collection, query, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, UserCheck, X, Lock } from "lucide-react";
+import { Plus, UserCheck, X, Lock, Eye, Pencil, Trash2 } from "lucide-react";
 
 interface UserItem {
   id: string;
@@ -14,12 +14,18 @@ interface UserItem {
   email?: string;
   role?: string;
   status?: string;
+  createdAt?: any;
 }
 
 export default function UsersPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "Kasir" });
+
+  // State untuk Fitur View, Edit, dan Delete
+  const [viewUser, setViewUser] = useState<UserItem | null>(null);
+  const [editUser, setEditUser] = useState<UserItem | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", role: "Kasir", status: "Aktif" });
 
   const usersQuery = useMemo(() => query(collection(db, "users")), []);
   const { data: users = [], loading } = useFirestoreQuery<UserItem>(usersQuery);
@@ -29,6 +35,55 @@ export default function UsersPage() {
       await updateDoc(doc(db, "users", userId), { role: newRole });
     } catch (error) {
       alert("Gagal memperbarui role!");
+    }
+  };
+
+  // 1. HANDLER EDIT KARYAWAN
+  const handleOpenEdit = (user: UserItem) => {
+    setEditUser(user);
+    setEditForm({
+      name: user.name || "",
+      role: user.role || "Kasir",
+      status: user.status || "Aktif",
+    });
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editUser) return;
+
+    try {
+      setIsSubmitting(true);
+      await updateDoc(doc(db, "users", editUser.id), {
+        name: editForm.name.trim(),
+        role: editForm.role,
+        status: editForm.status,
+      });
+
+      alert("Data karyawan berhasil diperbarui!");
+      setEditUser(null);
+    } catch (error: any) {
+      console.error("Error updating user:", error);
+      alert(`Gagal memperbarui karyawan: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 2. HANDLER DELETE KARYAWAN
+  const handleDeleteUser = async (userId: string, userName?: string) => {
+    const isConfirmed = confirm(
+      `Apakah Anda yakin ingin menghapus data karyawan "${userName || "ini"}" dari database?`
+    );
+
+    if (!isConfirmed) return;
+
+    try {
+      await deleteDoc(doc(db, "users", userId));
+      alert("Data karyawan berhasil dihapus!");
+    } catch (error: any) {
+      console.error("Error deleting user:", error);
+      alert(`Gagal menghapus karyawan: ${error.message}`);
     }
   };
 
@@ -88,6 +143,7 @@ export default function UsersPage() {
       setIsSubmitting(false);
     }
   };
+
   return (
     <div className="p-6 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto">
@@ -120,6 +176,7 @@ export default function UsersPage() {
                     <th className="p-4">EMAIL</th>
                     <th className="p-4">HAK AKSES (ROLE)</th>
                     <th className="p-4">STATUS AKUN</th>
+                    <th className="p-4 text-center">AKSI</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
@@ -140,10 +197,44 @@ export default function UsersPage() {
                         </select>
                       </td>
                       <td className="p-4">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          u.status === "Nonaktif" 
+                            ? "bg-rose-100 text-rose-800" 
+                            : "bg-emerald-100 text-emerald-800"
+                        }`}>
                           <UserCheck className="h-3.5 w-3.5" />
                           {u.status || "Aktif"}
                         </span>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center justify-center gap-2">
+                          {/* Tombol View */}
+                          <button
+                            onClick={() => setViewUser(u)}
+                            className="p-1.5 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
+                            title="Detail Staf"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+
+                          {/* Tombol Edit */}
+                          <button
+                            onClick={() => handleOpenEdit(u)}
+                            className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                            title="Edit Staf"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+
+                          {/* Tombol Delete */}
+                          <button
+                            onClick={() => handleDeleteUser(u.id, u.name)}
+                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Hapus Staf"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -238,6 +329,141 @@ export default function UsersPage() {
                   className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-medium disabled:opacity-50"
                 >
                   {isSubmitting ? "Mendaftarkan..." : "Simpan Karyawan"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL VIEW DETAIL KARYAWAN */}
+      {viewUser && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
+            <div className="flex justify-between items-center mb-4 border-b pb-3">
+              <h2 className="text-lg font-bold text-slate-800">Detail Karyawan</h2>
+              <button
+                onClick={() => setViewUser(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">Nama Lengkap</span>
+                <span className="font-semibold text-slate-800">{viewUser.name || "-"}</span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">Email Login</span>
+                <span className="text-slate-700">{viewUser.email || "-"}</span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">Role / Hak Akses</span>
+                <span className="font-medium text-sky-600">{viewUser.role || "Kasir"}</span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">Status Akun</span>
+                <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold mt-0.5 ${
+                  viewUser.status === "Nonaktif" ? "bg-rose-100 text-rose-800" : "bg-emerald-100 text-emerald-800"
+                }`}>
+                  {viewUser.status || "Aktif"}
+                </span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">ID Karyawan (UID)</span>
+                <span className="text-xs font-mono bg-slate-100 p-1.5 rounded block text-slate-600 break-all">
+                  {viewUser.id}
+                </span>
+              </div>
+            </div>
+            <div className="flex justify-end pt-4">
+              <button
+                onClick={() => setViewUser(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT KARYAWAN */}
+      {editUser && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
+            <div className="flex justify-between items-center mb-4 border-b pb-3">
+              <h2 className="text-lg font-bold text-slate-800">Edit Data Karyawan</h2>
+              <button
+                onClick={() => setEditUser(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEdit} className="space-y-4 text-sm">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap</label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Email Login (Read-Only)</label>
+                <input
+                  type="email"
+                  disabled
+                  value={editUser.email || ""}
+                  className="w-full border bg-slate-100 rounded-lg p-2.5 text-slate-500 cursor-not-allowed"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Role / Jabatan</label>
+                <select
+                  value={editForm.role}
+                  onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                  className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                >
+                  <option value="Admin">Admin (Full Control)</option>
+                  <option value="Kasir">Kasir (POS & Order)</option>
+                  <option value="Kurir">Kurir (Pickup / Delivery)</option>
+                  <option value="Produksi">Operator Cuci / Setrika</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Status Akun</label>
+                <select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                  className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                >
+                  <option value="Aktif">Aktif</option>
+                  <option value="Nonaktif">Nonaktif</option>
+                </select>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3">
+                <button
+                  type="button"
+                  onClick={() => setEditUser(null)}
+                  className="px-4 py-2 border rounded-lg text-slate-600"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-medium disabled:opacity-50"
+                >
+                  {isSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
                 </button>
               </div>
             </form>

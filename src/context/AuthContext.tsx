@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, signOut as firebaseSignOut, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useRouter, usePathname } from "next/navigation";
 
@@ -31,14 +31,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       console.log("[AuthContext] Firebase Auth berubah state:", firebaseUser ? `User terdeteksi: ${firebaseUser.email}` : "Tidak ada user login");
 
-      if (firebaseUser) {
+      if (firebaseUser && firebaseUser.email) {
         try {
-          console.log(`[AuthContext] Membaca data Firestore untuk UID: ${firebaseUser.uid}...`);
-          const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+          console.log(`[AuthContext] Membaca data Firestore untuk Email: ${firebaseUser.email}...`);
           
-          if (userDoc.exists()) {
-            console.log("[AuthContext] Dokumen user ditemukan di Firestore:", userDoc.data());
-            setUser({ uid: firebaseUser.uid, email: firebaseUser.email, ...userDoc.data() });
+          // Mengganti pencarian ID dokumen (doc) menjadi Query berdasarkan email
+          const q = query(collection(db, "users"), where("email", "==", firebaseUser.email));
+          const querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            const userData = querySnapshot.docs[0].data();
+            console.log("[AuthContext] Dokumen user ditemukan di Firestore:", userData);
+            setUser({ uid: firebaseUser.uid, email: firebaseUser.email, ...userData });
           } else {
             console.warn("[AuthContext] Dokumen user TIDAK ditemukan di Firestore, menggunakan data fallback.");
             setUser({ uid: firebaseUser.uid, email: firebaseUser.email, name: firebaseUser.displayName || "Admin", role: "Admin" });

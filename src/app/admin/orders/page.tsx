@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { db } from "@/lib/firebase";
 import { collection, query, orderBy, updateDoc, doc, addDoc, serverTimestamp } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, LayoutGrid, List, X, CheckCircle2, UserPlus } from "lucide-react";
+import { Plus, LayoutGrid, List, X, CheckCircle2, UserPlus, Printer } from "lucide-react";
 
 interface Order {
   id?: string;
@@ -17,6 +17,7 @@ interface Order {
   totalAmount?: number;
   paymentStatus?: string;
   status?: string;
+  notes?: string;
 }
 
 interface CustomerItem {
@@ -49,6 +50,10 @@ export default function OrdersPage() {
   // State untuk menyimpan order yang sedang/baru saja dicetak
   const [printOrder, setPrintOrder] = useState<Order | null>(null);
 
+  // State Koneksi Printer & Device Handle
+  const [isPrinterConnected, setIsPrinterConnected] = useState(false);
+  const [printerPort, setPrinterPort] = useState<any>(null);
+
   const [form, setForm] = useState({
     customerName: "",
     customerPhone: "",
@@ -57,6 +62,7 @@ export default function OrdersPage() {
     weightQty: 1,
     totalAmount: 0,
     paymentStatus: "Belum Bayar",
+    notes: "",
   });
 
   // Query Data Pesanan
@@ -88,6 +94,79 @@ export default function OrdersPage() {
   }, [form.customerName, customers]);
 
   const isRegisteredCustomer = Boolean(matchedCustomer);
+
+  // Fungsi Hubungkan/Putuskan Printer Thermal (Web Serial / Bluetooth)
+  const handleConnectPrinter = async () => {
+    if (isPrinterConnected) {
+      if (printerPort && printerPort.close) {
+        try { await printerPort.close(); } catch (e) {}
+      }
+      setPrinterPort(null);
+      setIsPrinterConnected(false);
+      return;
+    }
+
+    try {
+      if ("serial" in navigator) {
+        const port = await (navigator as any).serial.requestPort();
+        await port.open({ baudRate: 9600 });
+        setPrinterPort(port);
+        setIsPrinterConnected(true);
+      } else if ("bluetooth" in navigator) {
+        const device = await (navigator as any).bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ["00001101-0000-1000-8000-00805f9b34fb"],
+        });
+        const server = await device.gatt.connect();
+        setPrinterPort(server);
+        setIsPrinterConnected(true);
+      } else {
+        alert("Browser tidak mendukung koneksi printer langsung (Web Serial/Bluetooth). Gunakan Chrome/Edge.");
+      }
+    } catch (err) {
+      console.error("Gagal terhubung ke printer:", err);
+    }
+  };
+
+  // Fungsi Cetak Otomatis Langsung ke Printer Tanpa Modal Preview Browser
+  const printDirectToPrinter = async (orderData: Order, storeSettings: SettingsItem) => {
+    if (!printerPort) return;
+
+    try {
+      const encoder = new TextEncoder();
+      const receiptText =
+        `\x1b\x40` + // Reset/Init Printer
+        `\x1b\x61\x01` + // Align Center
+        `${storeSettings.storeName || "NOTA LAUNDRY"}\n` +
+        `${storeSettings.storeAddress ? storeSettings.storeAddress + "\n" : ""}` +
+        `${storeSettings.storePhone ? "Telp/WA: " + storeSettings.storePhone + "\n" : ""}` +
+        `--------------------------------\n` +
+        `\x1b\x61\x00` + // Align Left
+        `No. Order: #${orderData.orderNumber}\n` +
+        `Pelanggan: ${orderData.customerName}\n` +
+        (orderData.customerPhone ? `No. HP   : ${orderData.customerPhone}\n` : "") +
+        `--------------------------------\n` +
+        `${orderData.serviceName} (${orderData.weightQty} Kg)\n` +
+        `Total     : Rp ${(orderData.totalAmount || 0).toLocaleString("id-ID")}\n` +
+        `--------------------------------\n` +
+        `Status Bayar: ${orderData.paymentStatus}\n` +
+        (orderData.notes ? `Catatan: ${orderData.notes}\n` : "") +
+        `--------------------------------\n` +
+        `\x1b\x61\x01` + // Align Center
+        `${storeSettings.receiptFooter || "Terima kasih atas kunjungan Anda!"}\n\n\n\n` +
+        `\x1d\x56\x41\x03`; // Cut Paper Command
+
+      const data = encoder.encode(receiptText);
+
+      if (printerPort.writable) {
+        const writer = printerPort.writable.getWriter();
+        await writer.write(data);
+        writer.releaseLock();
+      }
+    } catch (error) {
+      console.error("Gagal mencetak otomatis:", error);
+    }
+  };
 
   // Handler saat Nama Pelanggan diketik / dipilih
   const handleCustomerNameChange = (name: string) => {
@@ -176,11 +255,13 @@ export default function OrdersPage() {
       // 2. Simpan Pesanan ke Firestore
       await addDoc(collection(db, "orders"), newOrderData);
 
-      // 3. Set data untuk dicetak & jalankan trigger window.print()
+      // 3. Set data order untuk cetak
       setPrintOrder(newOrderData);
-      setTimeout(() => {
-        window.print();
-      }, 300);
+
+      // 4. Otomatis Cetak Langsung HANYA saat Printer Sudah Terhubung (Tanpa preview print window.print)
+      if (isPrinterConnected && printerPort) {
+        await printDirectToPrinter(newOrderData, settings);
+      }
 
       setIsModalOpen(false);
       setForm({
@@ -191,6 +272,7 @@ export default function OrdersPage() {
         weightQty: 1,
         totalAmount: 0,
         paymentStatus: "Belum Bayar",
+        notes: "",
       });
       setSelectedServicePrice(0);
     } catch (error) {
@@ -209,6 +291,24 @@ export default function OrdersPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Indikator Status & Tombol Koneksi Printer */}
+            <button
+              onClick={handleConnectPrinter}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-all ${
+                isPrinterConnected
+                  ? "bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                  : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100"
+              }`}
+            >
+              <Printer className={`h-4 w-4 ${isPrinterConnected ? "text-emerald-600" : "text-slate-400"}`} />
+              <span>{isPrinterConnected ? "Printer Terhubung" : "Hubungkan Printer"}</span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isPrinterConnected ? "bg-emerald-500 animate-pulse" : "bg-slate-300"
+                }`}
+              />
+            </button>
+
             <div className="flex items-center bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
               <button className="p-1.5 text-sky-600 bg-slate-100 rounded-md">
                 <LayoutGrid className="h-4 w-4" />
@@ -418,6 +518,20 @@ export default function OrdersPage() {
                 </select>
               </div>
 
+              {/* INPUT CATATAN */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Catatan <span className="text-slate-400 font-normal">(Opsional)</span>
+                </label>
+                <textarea
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  placeholder="Contoh: Baju putih dipisah, jangan terlalu wangi..."
+                  rows={2}
+                  className="w-full border border-slate-200 rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                />
+              </div>
+
               <div className="flex gap-2 justify-end pt-3">
                 <button
                   type="button"
@@ -486,6 +600,12 @@ export default function OrdersPage() {
             <span>Status Bayar:</span>
             <span>{printOrder.paymentStatus}</span>
           </div>
+          {printOrder.notes && (
+            <div className="flex justify-between">
+              <span>Catatan:</span>
+              <span>{printOrder.notes}</span>
+            </div>
+          )}
           <div className="flex justify-between font-bold text-sm mt-1">
             <span>TOTAL:</span>
             <span>Rp {(printOrder.totalAmount || 0).toLocaleString("id-ID")}</span>

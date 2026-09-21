@@ -2,9 +2,9 @@
 
 import { useState, useMemo } from "react";
 import { db } from "@/lib/firebase";
-import { collection, query, addDoc, where, getDocs } from "firebase/firestore";
+import { collection, query, addDoc, where, getDocs, updateDoc, deleteDoc, doc } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, X, History, ShoppingBag, Loader2 } from "lucide-react";
+import { Plus, X, History, ShoppingBag, Loader2, Eye, Pencil, Trash2 } from "lucide-react";
 
 interface CustomerItem {
   id: string;
@@ -33,6 +33,12 @@ export default function CustomersPage() {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
+  // State untuk Fitur View, Edit, dan Delete
+  const [viewCustomer, setViewCustomer] = useState<CustomerItem | null>(null);
+  const [editCustomer, setEditCustomer] = useState<CustomerItem | null>(null);
+  const [editForm, setEditForm] = useState({ name: "", phone: "", address: "" });
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+
   const customersQuery = useMemo(() => query(collection(db, "customers")), []);
   const { data: customers = [], loading } = useFirestoreQuery<CustomerItem>(customersQuery);
 
@@ -56,7 +62,7 @@ export default function CustomersPage() {
     try {
       const q = query(
         collection(db, "orders"),
-        where("customerName", "==", customer.name || customer.name || ""),
+        where("customerName", "==", customer.name || ""),
       );
 
       const querySnapshot = await getDocs(q);
@@ -77,6 +83,55 @@ export default function CustomersPage() {
       console.error("Gagal mengambil riwayat order:", error);
     } finally {
       setIsLoadingOrders(false);
+    }
+  };
+
+  // HANDLER EDIT PELANGGAN
+  const handleOpenEdit = (customer: CustomerItem) => {
+    setEditCustomer(customer);
+    setEditForm({
+      name: customer.name || "",
+      phone: customer.phone || "",
+      address: customer.address || "",
+    });
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editCustomer) return;
+
+    try {
+      setIsSubmittingEdit(true);
+      await updateDoc(doc(db, "customers", editCustomer.id), {
+        name: editForm.name.trim(),
+        phone: editForm.phone.trim(),
+        address: editForm.address.trim(),
+      });
+
+      alert("Data pelanggan berhasil diperbarui!");
+      setEditCustomer(null);
+    } catch (error: any) {
+      console.error("Error updating customer:", error);
+      alert(`Gagal memperbarui pelanggan: ${error.message}`);
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  };
+
+  // HANDLER DELETE PELANGGAN
+  const handleDeleteCustomer = async (customerId: string, customerName?: string) => {
+    const isConfirmed = confirm(
+      `Apakah Anda yakin ingin menghapus pelanggan "${customerName || "ini"}"?`
+    );
+
+    if (!isConfirmed) return;
+
+    try {
+      await deleteDoc(doc(db, "customers", customerId));
+      alert("Data pelanggan berhasil dihapus!");
+    } catch (error: any) {
+      console.error("Error deleting customer:", error);
+      alert(`Gagal menghapus pelanggan: ${error.message}`);
     }
   };
 
@@ -111,6 +166,7 @@ export default function CustomersPage() {
                     <th className="p-4">NO. TELEPON / WA</th>
                     <th className="p-4">ALAMAT</th>
                     <th className="p-4 text-center">RIWAYAT ORDER</th>
+                    <th className="p-4 text-center">AKSI</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
@@ -127,6 +183,36 @@ export default function CustomersPage() {
                           <History className="h-3.5 w-3.5" />
                           <span>Lihat Riwayat</span>
                         </button>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center justify-center gap-2">
+                          {/* Tombol View */}
+                          <button
+                            onClick={() => setViewCustomer(c)}
+                            className="p-1.5 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
+                            title="Detail Pelanggan"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+
+                          {/* Tombol Edit */}
+                          <button
+                            onClick={() => handleOpenEdit(c)}
+                            className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                            title="Edit Pelanggan"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+
+                          {/* Tombol Delete */}
+                          <button
+                            onClick={() => handleDeleteCustomer(c.id, c.name)}
+                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Hapus Pelanggan"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -278,6 +364,118 @@ export default function CustomersPage() {
                 Tutup
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL VIEW DETAIL PELANGGAN */}
+      {viewCustomer && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
+            <div className="flex justify-between items-center mb-4 border-b pb-3">
+              <h2 className="text-lg font-bold text-slate-800">Detail Pelanggan</h2>
+              <button
+                onClick={() => setViewCustomer(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">Nama Lengkap</span>
+                <span className="font-semibold text-slate-800">{viewCustomer.name || "-"}</span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">No. Telepon / WA</span>
+                <span className="text-slate-700">{viewCustomer.phone || "-"}</span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">Alamat</span>
+                <span className="text-slate-700 whitespace-pre-line">{viewCustomer.address || "-"}</span>
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 block font-medium">ID Pelanggan</span>
+                <span className="text-xs font-mono bg-slate-100 p-1.5 rounded block text-slate-600 break-all">
+                  {viewCustomer.id}
+                </span>
+              </div>
+            </div>
+            <div className="flex justify-end pt-4">
+              <button
+                onClick={() => setViewCustomer(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT PELANGGAN */}
+      {editCustomer && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
+            <div className="flex justify-between items-center mb-4 border-b pb-3">
+              <h2 className="text-lg font-bold text-slate-800">Edit Data Pelanggan</h2>
+              <button
+                onClick={() => setEditCustomer(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEdit} className="space-y-4 text-sm">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Lengkap</label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">No. WhatsApp/HP</label>
+                <input
+                  type="text"
+                  required
+                  value={editForm.phone}
+                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                  className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Alamat</label>
+                <textarea
+                  value={editForm.address}
+                  onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                  className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3">
+                <button
+                  type="button"
+                  onClick={() => setEditCustomer(null)}
+                  className="px-4 py-2 border rounded-lg text-slate-600"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingEdit}
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-medium disabled:opacity-50"
+                >
+                  {isSubmittingEdit ? "Menyimpan..." : "Simpan Perubahan"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

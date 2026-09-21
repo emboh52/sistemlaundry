@@ -12,13 +12,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "LALA LAUNDRY",
+  title: "SISTEM LAUNDRY",
   description: "Aplikasi Kasir & Booking Laundry Modern",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "LALA LAUNDRY",
+    title: "SISTEM LAUNDRY",
   },
 };
 

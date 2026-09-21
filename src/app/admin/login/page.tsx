@@ -3,20 +3,23 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
-import { auth } from "@/lib/firebase"; // Sesuaikan path firebase config Anda
+import { auth } from "@/lib/firebase";
 
 export default function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true); // State penahan loading awal
   const router = useRouter();
 
-  // Jika user sudah login, langsung teruskan ke dashboard
+  // Cek status auth saat pertama kali halaman dimuat
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         router.replace("/admin/dashboard");
+      } else {
+        setCheckingAuth(false); // Hanya tampilkan form jika user fix belum login
       }
     });
     return () => unsubscribe();
@@ -29,12 +32,22 @@ export default function AdminLogin() {
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      router.replace("/admin/dashboard");
+      // Navigasi tidak perlu dipanggil di sini lagi karena sudah 
+      // otomatis ditangani oleh onAuthStateChanged di useEffect di atas.
     } catch (err: any) {
       setError("Email atau password salah.");
       setIsSubmitting(false);
     }
   };
+
+  // Tampilkan layar memuat sementara agar form tidak berkedip saat pertama kali dibuka
+  if (checkingAuth) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-100">
+        <div className="text-slate-600 font-medium text-sm">Memeriksa sesi login...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen items-center justify-center bg-gray-100">
@@ -50,7 +63,7 @@ export default function AdminLogin() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full rounded border px-3 py-2 outline-none focus:border-blue-500"
+            className="w-full rounded border px-3 py-2 outline-none focus:border-blue-500 text-slate-800"
           />
         </div>
 
@@ -61,14 +74,14 @@ export default function AdminLogin() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded border px-3 py-2 outline-none focus:border-blue-500"
+            className="w-full rounded border px-3 py-2 outline-none focus:border-blue-500 text-slate-800"
           />
         </div>
 
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded bg-blue-600 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
+          className="w-full rounded bg-blue-600 py-2 text-white hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
         >
           {isSubmitting ? "Memproses..." : "Masuk ke Dashboard"}
         </button>
