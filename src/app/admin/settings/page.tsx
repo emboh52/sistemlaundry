@@ -9,6 +9,7 @@ import {
 import { Store, Phone, MapPin, FileText, Printer, Save, Check, Loader2 } from "lucide-react";
 
 export default function SettingsPage() {
+  const [tenantId, setTenantId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -21,11 +22,18 @@ export default function SettingsPage() {
     paperSize: "58mm",
   });
 
-  // Execute: Perintah Ambil Data Pengaturan
+  // Execute: Perintah Ambil Data Pengaturan Terisolasi per tenantId
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const data = await getBusinessSettings();
+        const activeTenant = localStorage.getItem("activeTenantId");
+        if (!activeTenant) {
+          setLoading(false);
+          return;
+        }
+        setTenantId(activeTenant);
+
+        const data = await getBusinessSettings(activeTenant);
 
         if (data) {
           setForm(data);
@@ -49,13 +57,17 @@ export default function SettingsPage() {
     fetchSettings();
   }, []);
 
-  // Execute: Perintah Simpan Pengaturan
+  // Execute: Perintah Simpan Pengaturan dengan tenantId
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan. Silakan login ulang.");
+      return;
+    }
     setSaving(true);
 
     try {
-      await saveBusinessSettings(form);
+      await saveBusinessSettings(form, tenantId);
       setShowSuccessToast(true);
       setTimeout(() => setShowSuccessToast(false), 3000);
     } catch (error) {

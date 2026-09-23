@@ -1,19 +1,31 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, orderBy } from "firebase/firestore";
+import { collection, query, where, orderBy } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
 import { ReportTableLayout, TableColumn, MetricItem } from "@/components/ReportTableLayout";
-import { TrendingUp, TrendingDown, Wallet, ArrowUpCircle, ArrowDownCircle, Download, Calendar } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, ArrowUpCircle, ArrowDownCircle, Download, Calendar, Loader2 } from "lucide-react";
 import * as XLSX from "xlsx";
 
 export default function FinancialReportPage() {
+  const { user, loading: authLoading } = useAuth();
+  const tenantId = (user as any)?.tenantId;
+
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
-  const ordersQuery = useMemo(() => query(collection(db, "orders"), orderBy("createdAt", "desc")), []);
-  const expensesQuery = useMemo(() => query(collection(db, "expenses"), orderBy("createdAt", "desc")), []);
+  // Query Firestore (Terisolasi per tenantId & menunggu auth selesai)
+  const ordersQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "orders"), where("tenantId", "==", tenantId), orderBy("createdAt", "desc"));
+  }, [authLoading, tenantId]);
+
+  const expensesQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "expenses"), where("tenantId", "==", tenantId), orderBy("createdAt", "desc"));
+  }, [authLoading, tenantId]);
 
   const { data: orders = [], loading: loadingOrders } = useFirestoreQuery<any>(ordersQuery);
   const { data: expenses = [], loading: loadingExpenses } = useFirestoreQuery<any>(expensesQuery);
@@ -171,6 +183,14 @@ export default function FinancialReportPage() {
     const fileSuffix = startDate || endDate ? `${startDate || "Awal"}_sd_${endDate || "Akhir"}` : "Semua_Periode";
     XLSX.writeFile(workbook, `Laporan_Keuangan_${fileSuffix}.xlsx`);
   };
+
+  if (authLoading || !tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

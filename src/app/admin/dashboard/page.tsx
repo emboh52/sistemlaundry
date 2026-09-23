@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { collection, query, orderBy } from "firebase/firestore";
+import { collection, query, where, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
   ShoppingBag,
@@ -18,7 +18,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Calendar,
-  Package,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import ResetDataModal from "@/components/admin/ResetDataModal";
@@ -31,6 +31,7 @@ interface Order {
   status?: string;
   totalAmount?: number;
   createdAt?: any;
+  tenantId?: string;
 }
 
 interface InventoryItem {
@@ -40,6 +41,7 @@ interface InventoryItem {
   stock?: number;
   minStock?: number;
   unit: string;
+  tenantId?: string;
 }
 
 interface Expense {
@@ -50,19 +52,32 @@ interface Expense {
   itemName?: string;
   addedQty?: number;
   createdAt?: any;
+  tenantId?: string;
 }
 
 export default function AdminDashboardPage() {
   const { user, loading: authLoading } = useAuth();
+  const tenantId = (user as any)?.tenantId;
   const router = useRouter();
 
   // Filter Periode (Hari Ini, 7 Hari Terakhir, Bulan Ini, Tahun Ini)
   const [timeRange, setTimeRange] = useState<"today" | "7days" | "month" | "year">("month");
 
-  // Query Firestore
-  const ordersQuery = useMemo(() => query(collection(db, "orders"), orderBy("createdAt", "desc")), []);
-  const inventoryQuery = useMemo(() => query(collection(db, "inventory")), []);
-  const expensesQuery = useMemo(() => query(collection(db, "expenses"), orderBy("createdAt", "desc")), []);
+  // Query Firestore (Terisolasi per tenantId & menunggu auth selesai)
+  const ordersQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "orders"), where("tenantId", "==", tenantId), orderBy("createdAt", "desc"));
+  }, [authLoading, tenantId]);
+
+  const inventoryQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "inventory"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
+
+  const expensesQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "expenses"), where("tenantId", "==", tenantId), orderBy("createdAt", "desc"));
+  }, [authLoading, tenantId]);
 
   const { data: orders = [], loading: ordersLoading } = useFirestoreQuery<Order>(ordersQuery);
   const { data: inventory = [] } = useFirestoreQuery<InventoryItem>(inventoryQuery);
@@ -154,10 +169,11 @@ export default function AdminDashboardPage() {
     return categories;
   }, [filteredExpenses]);
 
-  if (authLoading) {
+  if (authLoading || !tenantId) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-600 font-medium">
-        Memverifikasi Sesi Admin...
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-600 font-medium gap-2">
+        <Loader2 className="w-5 h-5 animate-spin text-sky-600" />
+        <span>Memverifikasi Sesi Admin...</span>
       </div>
     );
   }
@@ -191,7 +207,7 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* 2. TOMBOL AKSI CIKAT (QUICK ACTIONS) */}
+      {/* 2. TOMBOL AKSI CEPAT (QUICK ACTIONS) */}
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href="/admin/orders"
@@ -215,8 +231,8 @@ export default function AdminDashboardPage() {
           <span>+ Kelola Stok</span>
         </Link>
 
-        {/* Modal Reset Data */}
-        <ResetDataModal userRole="admin" />
+        {/* Modal Reset Data (Hanya tampil untuk Admin) */}
+        {user.role === "Admin" && <ResetDataModal userRole="admin" />}
       </div>
 
       {/* 3. KARTU METRIK UTAMA (KPI CARDS) */}

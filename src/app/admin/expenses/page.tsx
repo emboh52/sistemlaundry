@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
 import { 
   collection, 
   query, 
+  where,
   orderBy, 
   doc, 
   writeBatch, 
@@ -12,7 +14,7 @@ import {
   serverTimestamp 
 } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, X, CheckCircle2, PackagePlus, Info } from "lucide-react";
+import { Plus, X, CheckCircle2, PackagePlus, Info, Loader2 } from "lucide-react";
 
 interface ExpenseItem {
   id: string;
@@ -21,6 +23,7 @@ interface ExpenseItem {
   category?: string;
   itemName?: string;
   addedQty?: number;
+  tenantId?: string;
 }
 
 interface InventoryItem {
@@ -29,11 +32,16 @@ interface InventoryItem {
   stockQty: number;
   unit: string;
   minStock?: number;
+  tenantId?: string;
 }
 
 export default function ExpensesPage() {
+  const { user, loading: authLoading } = useAuth();
+  const tenantId = (user as any)?.tenantId;
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCustomItem, setIsCustomItem] = useState(false);
 
   // Form State
   const [form, setForm] = useState({
@@ -45,35 +53,42 @@ export default function ExpensesPage() {
     unit: "Liter",
   });
 
-  // Query Daftar Pengeluaran
-  const expensesQuery = useMemo(
-    () => query(collection(db, "expenses"), orderBy("createdAt", "desc")),
-    []
-  );
+  // Query Daftar Pengeluaran (Terisolasi per tenantId & menunggu auth selesai)
+  const expensesQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "expenses"), where("tenantId", "==", tenantId), orderBy("createdAt", "desc"));
+  }, [authLoading, tenantId]);
   const { data: expenses = [], loading } = useFirestoreQuery<ExpenseItem>(expensesQuery);
 
-  // Query Daftar Stok Bahan Baku untuk Autocomplete
-  const inventoryQuery = useMemo(() => query(collection(db, "inventory")), []);
+  // Query Daftar Stok Bahan Baku dari Inventory (Terisolasi per tenantId)
+  const inventoryQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "inventory"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
   const { data: inventoryList = [] } = useFirestoreQuery<InventoryItem>(inventoryQuery);
 
-  // Cek apakah item yang diketik sudah terdaftar di database stok
+  // Cek apakah item yang dipilih/diketik sudah terdaftar di database stok
   const matchedExistingItem = useMemo(() => {
-    if (!form.itemName.trim()) return null;
+    if (!form.itemName.trim() || isCustomItem) return null;
     return inventoryList.find(
       (item) => item.name.toLowerCase() === form.itemName.trim().toLowerCase()
     );
-  }, [form.itemName, inventoryList]);
+  }, [form.itemName, inventoryList, isCustomItem]);
 
-  // Handler Perubahan Nama Item
-  const handleItemNameChange = (value: string) => {
-    const matched = inventoryList.find(
-      (item) => item.name.toLowerCase() === value.trim().toLowerCase()
-    );
+  // Handler saat dropdown inventory dipilih
+  const handleInventorySelect = (selectedName: string) => {
+    if (selectedName === "__NEW__") {
+      setIsCustomItem(true);
+      setForm((prev) => ({ ...prev, itemName: "", unit: "Liter" }));
+      return;
+    }
+
+    setIsCustomItem(false);
+    const matched = inventoryList.find((item) => item.name === selectedName);
     
     setForm((prev) => ({
       ...prev,
-      itemName: value,
-      // Otomatis samakan satuan jika item sudah ada
+      itemName: selectedName,
       unit: matched ? matched.unit : prev.unit,
     }));
   };
@@ -81,6 +96,10 @@ export default function ExpensesPage() {
   // Submit Handler: Menambah Pengeluaran & Update/Tambah Stok secara Atomic (Batch)
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan. Silakan login ulang.");
+      return;
+    }
     if (!form.title || !form.amount) return;
 
     setIsSubmitting(true);
@@ -91,10 +110,10 @@ export default function ExpensesPage() {
       const addedQtyNum = Number(form.addedQty) || 0;
       let targetInventoryId: string | null = null;
 
-      // 1. LOGIKA PENYESUAIAN STOK
-      if (trimmedItemName && addedQtyNum > 0) {
+      // 1. LOGIKA PENYESUAIAN STOK (Hanya jika kategori Bahan Baku dan item diisi)
+      if (form.category === "Bahan Baku" && trimmedItemName && addedQtyNum > 0) {
         if (matchedExistingItem) {
-          // A. JIKA ITEM SUDAH ADA -> Tambah Stok Lama (+increment)
+          // A. JIKA ITEM SUDAH ADA DI INVENTORI -> Tambah Stok Lama (+increment)
           targetInventoryId = matchedExistingItem.id;
           const invRef = doc(db, "inventory", matchedExistingItem.id);
           batch.update(invRef, {
@@ -102,7 +121,7 @@ export default function ExpensesPage() {
             updatedAt: serverTimestamp(),
           });
         } else {
-          // B. JIKA ITEM BARU -> Buat Dokumen Stok Baru di "inventory"
+          // B. JIKA ITEM BARU -> Buat Dokumen Stok Baru di "inventory" dengan tenantId
           const newInvRef = doc(collection(db, "inventory"));
           targetInventoryId = newInvRef.id;
           batch.set(newInvRef, {
@@ -110,21 +129,23 @@ export default function ExpensesPage() {
             stockQty: addedQtyNum,
             unit: form.unit || "Pcs",
             minStock: 5,
+            tenantId: tenantId,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         }
       }
 
-      // 2. SIMPAN CATATAN PENGELUARAN KE "expenses"
+      // 2. SIMPAN CATATAN PENGELUARAN KE "expenses" DENGAN tenantId
       const expenseRef = doc(collection(db, "expenses"));
       batch.set(expenseRef, {
         title: form.title.trim(),
         category: form.category,
         amount: Number(form.amount),
         inventoryId: targetInventoryId,
-        itemName: trimmedItemName || null,
-        addedQty: addedQtyNum,
+        itemName: form.category === "Bahan Baku" && trimmedItemName ? trimmedItemName : null,
+        addedQty: form.category === "Bahan Baku" ? addedQtyNum : 0,
+        tenantId: tenantId,
         createdAt: serverTimestamp(),
       });
 
@@ -133,6 +154,7 @@ export default function ExpensesPage() {
 
       // Reset Modal & Form
       setIsModalOpen(false);
+      setIsCustomItem(false);
       setForm({
         title: "",
         category: "Bahan Baku",
@@ -148,6 +170,14 @@ export default function ExpensesPage() {
       setIsSubmitting(false);
     }
   };
+
+  if (authLoading || !tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 md:p-8 font-sans">
@@ -266,97 +296,125 @@ export default function ExpensesPage() {
                 </div>
               </div>
 
-              {/* SECTION PENYESUAIAN STOK (OPSIONAL) */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                <div className="flex justify-between items-center">
-                  <label className="block text-xs font-bold text-slate-700">
-                    Tambah Ke Stok Bahan Baku <span className="text-slate-400 font-normal">(Opsional)</span>
-                  </label>
+              {/* SECTION PENYESUAIAN STOK (Hanya muncul jika Kategori = Bahan Baku) */}
+              {form.category === "Bahan Baku" && (
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Tambah Otomatis ke Stok Bahan Baku
+                    </label>
 
-                  {/* Badges Indikator */}
-                  {matchedExistingItem ? (
-                    <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                      <CheckCircle2 className="h-3 w-3" /> Item Terdaftar
-                    </span>
-                  ) : form.itemName.trim() ? (
-                    <span className="text-[11px] text-sky-600 font-semibold flex items-center gap-1 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
-                      <PackagePlus className="h-3 w-3" /> Item Baru
-                    </span>
-                  ) : null}
-                </div>
+                    {/* Badges Indikator */}
+                    {matchedExistingItem ? (
+                      <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        <CheckCircle2 className="h-3 w-3" /> Stok Terdaftar
+                      </span>
+                    ) : isCustomItem ? (
+                      <span className="text-[11px] text-sky-600 font-semibold flex items-center gap-1 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                        <PackagePlus className="h-3 w-3" /> Item Baru
+                      </span>
+                    ) : null}
+                  </div>
 
-                {/* Input dengan Datalist Recommendation */}
-                <div>
-                  <input
-                    type="text"
-                    list="inventory-suggestions"
-                    value={form.itemName}
-                    onChange={(e) => handleItemNameChange(e.target.value)}
-                    placeholder="Pilih item stok atau ketik baru..."
-                    className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                  />
-
-                  {/* Rekomendasi Item Stok */}
-                  <datalist id="inventory-suggestions">
-                    {inventoryList.map((item) => (
-                      <option key={item.id} value={item.name}>
-                        Sisa Stok: {item.stockQty} {item.unit}
-                      </option>
-                    ))}
-                  </datalist>
-                </div>
-
-                {/* Jika nama item diisi, tampilkan Kuantitas & Satuan */}
-                {form.itemName.trim() && (
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Jumlah Dibeli</label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        placeholder="Kuantitas"
-                        value={form.addedQty}
-                        onChange={(e) => setForm({ ...form, addedQty: e.target.value ? Number(e.target.value) : "" })}
-                        className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Satuan</label>
-                      {matchedExistingItem ? (
+                  {/* Dropdown / Input Pemilihan Item dari Inventory */}
+                  <div>
+                    {!isCustomItem ? (
+                      <div className="space-y-2">
+                        <select
+                          value={form.itemName}
+                          onChange={(e) => handleInventorySelect(e.target.value)}
+                          className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white text-slate-800"
+                        >
+                          <option value="">-- Pilih dari Daftar Inventori --</option>
+                          {inventoryList.map((item) => (
+                            <option key={item.id} value={item.name}>
+                              {item.name} (Stok: {item.stockQty} {item.unit})
+                            </option>
+                          ))}
+                          <option value="__NEW__" className="font-semibold text-sky-600">
+                            + Tambah Item Bahan Baku Baru...
+                          </option>
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Masukkan nama item baru:</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsCustomItem(false);
+                              setForm((prev) => ({ ...prev, itemName: "" }));
+                            }}
+                            className="text-xs text-sky-600 hover:underline font-semibold"
+                          >
+                            ← Kembali ke Daftar
+                          </button>
+                        </div>
                         <input
                           type="text"
-                          disabled
-                          value={matchedExistingItem.unit}
-                          className="w-full border rounded-lg p-2.5 bg-slate-100 text-slate-500 font-medium cursor-not-allowed"
-                        />
-                      ) : (
-                        <select
-                          value={form.unit}
-                          onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                          required
+                          value={form.itemName}
+                          onChange={(e) => setForm({ ...form, itemName: e.target.value })}
+                          placeholder="Contoh: Pewangi Downy, Plastik Packing..."
                           className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                        >
-                          <option value="Liter">Liter</option>
-                          <option value="ml">ml</option>
-                          <option value="Kg">Kg</option>
-                          <option value="Gram">Gram</option>
-                          <option value="Pcs">Pcs</option>
-                          <option value="Botol">Botol</option>
-                          <option value="Packs">Packs</option>
-                        </select>
-                      )}
-                    </div>
+                        />
+                      </div>
+                    )}
                   </div>
-                )}
 
-                {matchedExistingItem && (
-                  <p className="text-[11px] text-slate-500 flex items-center gap-1">
-                    <Info className="h-3.5 w-3.5 text-slate-400" />
-                    Stok saat ini: <strong>{matchedExistingItem.stockQty} {matchedExistingItem.unit}</strong>. Akan bertambah otomatis.
-                  </p>
-                )}
-              </div>
+                  {/* Jika item sudah dipilih atau diisi, tampilkan Jumlah & Satuan */}
+                  {form.itemName.trim() && (
+                    <div className="grid grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Jumlah Dibeli</label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          placeholder="Kuantitas"
+                          value={form.addedQty}
+                          onChange={(e) => setForm({ ...form, addedQty: e.target.value ? Number(e.target.value) : "" })}
+                          className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Satuan</label>
+                        {matchedExistingItem && !isCustomItem ? (
+                          <input
+                            type="text"
+                            disabled
+                            value={matchedExistingItem.unit}
+                            className="w-full border rounded-lg p-2.5 bg-slate-100 text-slate-500 font-medium cursor-not-allowed"
+                          />
+                        ) : (
+                          <select
+                            value={form.unit}
+                            onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                            className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                          >
+                            <option value="Liter">Liter</option>
+                            <option value="ml">ml</option>
+                            <option value="Kg">Kg</option>
+                            <option value="Gram">Gram</option>
+                            <option value="Pcs">Pcs</option>
+                            <option value="Botol">Botol</option>
+                            <option value="Packs">Packs</option>
+                          </select>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {matchedExistingItem && !isCustomItem && (
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <Info className="h-3.5 w-3.5 text-slate-400" />
+                      Stok saat ini: <strong>{matchedExistingItem.stockQty} {matchedExistingItem.unit}</strong>. Akan bertambah otomatis setelah disimpan.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex gap-2 justify-end pt-3">

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useAuth } from "@/context/AuthContext"; // 1. Import useAuth
 import { db } from "@/lib/firebase";
-import { collection, query, addDoc, doc, updateDoc, deleteDoc } from "firebase/firestore";
+import { collection, query, where, addDoc, doc, updateDoc, deleteDoc } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, X, Pencil, Trash2 } from "lucide-react";
+import { Plus, X, Pencil, Trash2, Loader2 } from "lucide-react";
 
 interface ServiceItem {
   id: string;
@@ -12,14 +13,23 @@ interface ServiceItem {
   price?: number;
   unit?: string;
   duration?: string;
+  tenantId?: string;
 }
 
 export default function ServicesPage() {
+  const { user } = useAuth(); // 2. Ambil data user yang sedang login
+  const tenantId = (user as any)?.tenantId; // 3. Ambil tenantId langsung dari dokumen user di Firestore
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", price: 7000, unit: "Kg", duration: "1 Hari" });
 
-  const servicesQuery = useMemo(() => query(collection(db, "services")), []);
+  // 4. Query Data Layanan (Otomatis menunggu tenantId siap)
+  const servicesQuery = useMemo(() => {
+    if (!tenantId) return null;
+    return query(collection(db, "services"), where("tenantId", "==", tenantId));
+  }, [tenantId]);
+
   const { data: services = [], loading } = useFirestoreQuery<ServiceItem>(servicesQuery);
 
   // Buka Modal untuk Tambah Baru
@@ -44,19 +54,23 @@ export default function ServicesPage() {
   // Submit Tambah / Edit
   const handleSubmitService = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan pada sesi login Anda.");
+      return;
+    }
+
     try {
       if (editingId) {
-        // Logika Update (Edit)
         const serviceRef = doc(db, "services", editingId);
         await updateDoc(serviceRef, {
           ...form,
           price: Number(form.price),
         });
       } else {
-        // Logika Create (Tambah Baru)
         await addDoc(collection(db, "services"), {
           ...form,
           price: Number(form.price),
+          tenantId: tenantId, // Pastikan tersimpan dengan tenantId aktif
         });
       }
       setIsModalOpen(false);
@@ -76,6 +90,14 @@ export default function ServicesPage() {
       alert("Gagal menghapus layanan!");
     }
   };
+
+  if (!tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 md:p-8 font-sans">

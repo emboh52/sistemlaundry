@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, addDoc } from "firebase/firestore";
+import { collection, query, where, addDoc } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, AlertTriangle, X } from "lucide-react";
+import { Plus, AlertTriangle, X, Loader2 } from "lucide-react";
 
 interface InventoryItem {
   id: string;
@@ -12,22 +13,37 @@ interface InventoryItem {
   stockQty?: number;
   unit?: string;
   minStock?: number;
+  tenantId?: string;
 }
 
 export default function InventoryPage() {
+  const { user, loading: authLoading } = useAuth();
+  const tenantId = (user as any)?.tenantId;
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState({ name: "", stockQty: 10, unit: "Pcs", minStock: 5 });
 
-  const inventoryQuery = useMemo(() => query(collection(db, "inventory")), []);
+  // Query Data Inventori (Terisolasi per tenantId dengan penjagaan authLoading)
+  const inventoryQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "inventory"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
+
   const { data: inventory = [], loading } = useFirestoreQuery<InventoryItem>(inventoryQuery);
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan. Silakan login ulang.");
+      return;
+    }
+
     try {
       await addDoc(collection(db, "inventory"), {
         ...form,
         stockQty: Number(form.stockQty),
         minStock: Number(form.minStock),
+        tenantId: tenantId,
       });
       setIsModalOpen(false);
       setForm({ name: "", stockQty: 10, unit: "Pcs", minStock: 5 });
@@ -35,6 +51,14 @@ export default function InventoryPage() {
       alert("Gagal menambah barang!");
     }
   };
+
+  if (authLoading || !tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 md:p-8 font-sans">

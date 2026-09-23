@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { db, firebaseConfig } from "@/lib/firebase";
-import { collection, query, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { collection, query, where, updateDoc, deleteDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, UserCheck, X, Lock, Eye, Pencil, Trash2 } from "lucide-react";
+import { Plus, UserCheck, X, Lock, Eye, Pencil, Trash2, Loader2 } from "lucide-react";
 
 interface UserItem {
   id: string;
@@ -14,10 +15,18 @@ interface UserItem {
   email?: string;
   role?: string;
   status?: string;
+  tenantId?: string;
   createdAt?: any;
 }
 
 export default function UsersPage() {
+  const { user } = useAuth();
+  const tenantId = (user as any)?.tenantId;
+
+  // 👇 TAMBAHKAN BARIS INI UNTUK MENGECEK NILAINYA DI CONSOLE
+  console.log("🔍 Sesi User Aktif:", user);
+  console.log("🏢 Tenant ID Terbaca:", tenantId);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "Kasir" });
@@ -27,7 +36,12 @@ export default function UsersPage() {
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [editForm, setEditForm] = useState({ name: "", role: "Kasir", status: "Aktif" });
 
-  const usersQuery = useMemo(() => query(collection(db, "users")), []);
+  // Query Daftar Staf (Terisolasi per tenantId)
+  const usersQuery = useMemo(() => {
+    if (!tenantId) return null;
+    return query(collection(db, "users"), where("tenantId", "==", tenantId));
+  }, [tenantId]);
+
   const { data: users = [], loading } = useFirestoreQuery<UserItem>(usersQuery);
 
   const handleRoleChange = async (userId: string, newRole: string) => {
@@ -39,12 +53,12 @@ export default function UsersPage() {
   };
 
   // 1. HANDLER EDIT KARYAWAN
-  const handleOpenEdit = (user: UserItem) => {
-    setEditUser(user);
+  const handleOpenEdit = (userItem: UserItem) => {
+    setEditUser(userItem);
     setEditForm({
-      name: user.name || "",
-      role: user.role || "Kasir",
-      status: user.status || "Aktif",
+      name: userItem.name || "",
+      role: userItem.role || "Kasir",
+      status: userItem.status || "Aktif",
     });
   };
 
@@ -89,6 +103,10 @@ export default function UsersPage() {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan. Silakan login ulang.");
+      return;
+    }
     if (!form.name || !form.email || !form.password) return;
 
     setIsSubmitting(true);
@@ -109,13 +127,14 @@ export default function UsersPage() {
       );
       secondaryUser = userCredential.user;
 
-      // 3. Simpan Profil ke Firestore (Menggunakan Primary App di mana Admin sedang Login)
+      // 3. Simpan Profil ke Firestore dengan tenantId
       await setDoc(doc(db, "users", secondaryUser.uid), {
         uid: secondaryUser.uid,
         name: form.name.trim(),
         email: form.email.trim(),
         role: form.role,
         status: "Aktif",
+        tenantId: tenantId,
         createdAt: serverTimestamp(),
       });
 
@@ -143,6 +162,14 @@ export default function UsersPage() {
       setIsSubmitting(false);
     }
   };
+
+  if (!tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 md:p-8 font-sans">

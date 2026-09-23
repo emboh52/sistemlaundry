@@ -7,16 +7,16 @@ export interface BusinessSettings {
   phone: string;
   receiptFooter: string;
   paperSize: "58mm" | "80mm";
+  tenantId?: string;
 }
 
-const SETTINGS_DOC_REF = doc(db, "settings", "business");
-
 /**
- * Perintah Ambil Data Pengaturan dari Firebase
+ * Perintah Ambil Data Pengaturan dari Firebase berdasarkan tenantId
  */
-export const getBusinessSettings = async (): Promise<BusinessSettings | null> => {
+export const getBusinessSettings = async (tenantId: string): Promise<BusinessSettings | null> => {
   try {
-    const docSnap = await getDoc(SETTINGS_DOC_REF);
+    const settingsDocRef = doc(db, "settings", tenantId);
+    const docSnap = await getDoc(settingsDocRef);
     if (docSnap.exists()) {
       return docSnap.data() as BusinessSettings;
     }
@@ -28,11 +28,12 @@ export const getBusinessSettings = async (): Promise<BusinessSettings | null> =>
 };
 
 /**
- * Perintah Simpan Pengaturan ke Firebase
+ * Perintah Simpan Pengaturan ke Firebase berdasarkan tenantId
  */
-export const saveBusinessSettings = async (data: BusinessSettings): Promise<void> => {
+export const saveBusinessSettings = async (data: BusinessSettings, tenantId: string): Promise<void> => {
   try {
-    await setDoc(SETTINGS_DOC_REF, data, { merge: true });
+    const settingsDocRef = doc(db, "settings", tenantId);
+    await setDoc(settingsDocRef, { ...data, tenantId }, { merge: true });
   } catch (error) {
     console.error("Gagal menyimpan data pengaturan ke Firebase:", error);
     throw error;

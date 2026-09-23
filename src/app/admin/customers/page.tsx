@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useAuth } from "@/context/AuthContext"; // 1. Import useAuth
 import { db } from "@/lib/firebase";
 import { collection, query, addDoc, where, getDocs, updateDoc, deleteDoc, doc } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
@@ -11,6 +12,7 @@ interface CustomerItem {
   name?: string;
   phone?: string;
   address?: string;
+  tenantId?: string;
 }
 
 interface OrderItem {
@@ -24,6 +26,9 @@ interface OrderItem {
 }
 
 export default function CustomersPage() {
+  const { user, loading: authLoading } = useAuth(); // 2. Ambil user & loading dari AuthContext
+  const tenantId = (user as any)?.tenantId; // 3. Ambil tenantId langsung dari dokumen user di Firestore
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState({ name: "", phone: "", address: "" });
 
@@ -39,13 +44,25 @@ export default function CustomersPage() {
   const [editForm, setEditForm] = useState({ name: "", phone: "", address: "" });
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
 
-  const customersQuery = useMemo(() => query(collection(db, "customers")), []);
+  // 4. Query Data Pelanggan (Menunggu Auth selesai & tenantId siap)
+  const customersQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "customers"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
+
   const { data: customers = [], loading } = useFirestoreQuery<CustomerItem>(customersQuery);
 
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan. Silakan login ulang.");
+      return;
+    }
     try {
-      await addDoc(collection(db, "customers"), form);
+      await addDoc(collection(db, "customers"), {
+        ...form,
+        tenantId: tenantId,
+      });
       setIsModalOpen(false);
       setForm({ name: "", phone: "", address: "" });
     } catch (error) {
@@ -53,22 +70,25 @@ export default function CustomersPage() {
     }
   };
 
-  // Fungsi untuk mengambil riwayat pesanan berdasarkan ID Pelanggan
+  // Fungsi untuk mengambil riwayat pesanan berdasarkan ID Pelanggan dan tenantId
   const handleViewHistory = async (customer: CustomerItem) => {
     setSelectedCustomer(customer);
     setIsHistoryOpen(true);
     setIsLoadingOrders(true);
 
     try {
+      if (!tenantId) return;
+      
       const q = query(
         collection(db, "orders"),
-        where("customerName", "==", customer.name || ""),
+        where("tenantId", "==", tenantId),
+        where("customerName", "==", customer.name || "")
       );
 
       const querySnapshot = await getDocs(q);
-      const orders = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+      const orders = querySnapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
       })) as OrderItem[];
 
       // Urutkan transaksi dari yang terbaru secara lokal
@@ -135,6 +155,14 @@ export default function CustomersPage() {
     }
   };
 
+  if (authLoading || !tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto">
@@ -186,7 +214,6 @@ export default function CustomersPage() {
                       </td>
                       <td className="p-4">
                         <div className="flex items-center justify-center gap-2">
-                          {/* Tombol View */}
                           <button
                             onClick={() => setViewCustomer(c)}
                             className="p-1.5 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
@@ -194,8 +221,6 @@ export default function CustomersPage() {
                           >
                             <Eye className="h-4 w-4" />
                           </button>
-
-                          {/* Tombol Edit */}
                           <button
                             onClick={() => handleOpenEdit(c)}
                             className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
@@ -203,8 +228,6 @@ export default function CustomersPage() {
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
-
-                          {/* Tombol Delete */}
                           <button
                             onClick={() => handleDeleteCustomer(c.id, c.name)}
                             className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
@@ -374,12 +397,7 @@ export default function CustomersPage() {
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
             <div className="flex justify-between items-center mb-4 border-b pb-3">
               <h2 className="text-lg font-bold text-slate-800">Detail Pelanggan</h2>
-              <button
-                onClick={() => setViewCustomer(null)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <button onClick={() => setViewCustomer(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
             <div className="space-y-3 text-sm">
               <div>
@@ -402,10 +420,7 @@ export default function CustomersPage() {
               </div>
             </div>
             <div className="flex justify-end pt-4">
-              <button
-                onClick={() => setViewCustomer(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium"
-              >
+              <button onClick={() => setViewCustomer(null)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium">
                 Tutup
               </button>
             </div>
@@ -419,12 +434,7 @@ export default function CustomersPage() {
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl relative">
             <div className="flex justify-between items-center mb-4 border-b pb-3">
               <h2 className="text-lg font-bold text-slate-800">Edit Data Pelanggan</h2>
-              <button
-                onClick={() => setEditCustomer(null)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <button onClick={() => setEditCustomer(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
             <form onSubmit={handleSaveEdit} className="space-y-4 text-sm">
               <div>
@@ -437,7 +447,6 @@ export default function CustomersPage() {
                   className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">No. WhatsApp/HP</label>
                 <input
@@ -448,7 +457,6 @@ export default function CustomersPage() {
                   className="w-full border rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-sky-500"
                 />
               </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Alamat</label>
                 <textarea
@@ -458,20 +466,9 @@ export default function CustomersPage() {
                   rows={2}
                 />
               </div>
-
               <div className="flex gap-2 justify-end pt-3">
-                <button
-                  type="button"
-                  onClick={() => setEditCustomer(null)}
-                  className="px-4 py-2 border rounded-lg text-slate-600"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingEdit}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-medium disabled:opacity-50"
-                >
+                <button type="button" onClick={() => setEditCustomer(null)} className="px-4 py-2 border rounded-lg text-slate-600">Batal</button>
+                <button type="submit" disabled={isSubmittingEdit} className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-medium disabled:opacity-50">
                   {isSubmittingEdit ? "Menyimpan..." : "Simpan Perubahan"}
                 </button>
               </div>

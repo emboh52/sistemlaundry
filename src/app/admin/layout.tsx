@@ -16,6 +16,7 @@ import {
   LogOut,
   Menu,
   X,
+  Store,
 } from "lucide-react";
 
 export default function AdminLayout({
@@ -26,6 +27,7 @@ export default function AdminLayout({
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const tenantId = (user as any)?.tenantId;
 
   // Mengambil huruf depan nama/email untuk avatar inisial
   const userInitial = user?.name 
@@ -72,6 +74,13 @@ export default function AdminLayout({
       icon: FileText,
     },
     {
+      title: "Daftar Tenant Baru",
+      href: "/admin/register-tenant",
+      icon: Store,
+      adminOnly: true, // Khusus Admin
+      mainTenantOnly: true, // Hanya untuk lala-laundry
+    },
+    {
       title: "Karyawan & RBAC",
       href: "/admin/users",
       icon: Users,
@@ -84,8 +93,11 @@ export default function AdminLayout({
     },
   ];
 
-  // Saring menu: Sembunyikan menu 'adminOnly' jika role pengguna bukan Admin
+  // Saring menu: Atur visibilitas berdasarkan role dan pengecualian tenant utama
   const visibleMenuItems = menuItems.filter((item) => {
+    if (item.mainTenantOnly) {
+      return user?.role === "Admin" && tenantId === "lala-laundry";
+    }
     if (item.adminOnly) {
       return user?.role === "Admin";
     }

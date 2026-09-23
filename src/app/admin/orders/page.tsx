@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { db } from "@/lib/firebase";
-import { collection, query, orderBy, updateDoc, doc, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, query, where, orderBy, updateDoc, doc, addDoc, serverTimestamp } from "firebase/firestore";
 import { useFirestoreQuery } from "@/hooks/useFirestoreQuery";
-import { Plus, LayoutGrid, List, X, CheckCircle2, UserPlus, Printer } from "lucide-react";
+import { Plus, LayoutGrid, List, X, CheckCircle2, UserPlus, Printer, Loader2 } from "lucide-react";
 
 interface Order {
   id?: string;
@@ -18,6 +19,7 @@ interface Order {
   paymentStatus?: string;
   status?: string;
   notes?: string;
+  tenantId?: string;
 }
 
 interface CustomerItem {
@@ -34,7 +36,6 @@ interface ServiceItem {
   unit?: string;
 }
 
-// Interface untuk Data Pengaturan Toko
 interface SettingsItem {
   id?: string;
   storeName?: string;
@@ -44,13 +45,13 @@ interface SettingsItem {
 }
 
 export default function OrdersPage() {
+  const { user, loading: authLoading } = useAuth();
+  const tenantId = (user as any)?.tenantId;
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedServicePrice, setSelectedServicePrice] = useState<number>(0);
   
-  // State untuk menyimpan order yang sedang/baru saja dicetak
   const [printOrder, setPrintOrder] = useState<Order | null>(null);
-
-  // State Koneksi Printer & Device Handle
   const [isPrinterConnected, setIsPrinterConnected] = useState(false);
   const [printerPort, setPrinterPort] = useState<any>(null);
 
@@ -65,27 +66,35 @@ export default function OrdersPage() {
     notes: "",
   });
 
-  // Query Data Pesanan
-  const ordersQuery = useMemo(
-    () => query(collection(db, "orders"), orderBy("createdAt", "desc")),
-    []
-  );
+  // Query Data Pesanan (Terisolasi per tenantId & menunggu auth selesai)
+  const ordersQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "orders"), where("tenantId", "==", tenantId), orderBy("createdAt", "desc"));
+  }, [authLoading, tenantId]);
   const { data: orders = [], loading } = useFirestoreQuery<Order>(ordersQuery);
 
-  // Query Data Pelanggan untuk Auto-detect & Auto-fill
-  const customersQuery = useMemo(() => query(collection(db, "customers")), []);
+  // Query Data Pelanggan (Terisolasi per tenantId)
+  const customersQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "customers"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
   const { data: customers = [] } = useFirestoreQuery<CustomerItem>(customersQuery);
 
-  // Query Data Layanan untuk Dropdown
-  const servicesQuery = useMemo(() => query(collection(db, "services")), []);
+  // Query Data Layanan (Terisolasi per tenantId)
+  const servicesQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "services"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
   const { data: services = [] } = useFirestoreQuery<ServiceItem>(servicesQuery);
 
-  // Query Data Pengaturan Toko dari Firestore
-  const settingsQuery = useMemo(() => query(collection(db, "settings")), []);
+  // Query Data Pengaturan Toko (Terisolasi per tenantId)
+  const settingsQuery = useMemo(() => {
+    if (authLoading || !tenantId) return null;
+    return query(collection(db, "settings"), where("tenantId", "==", tenantId));
+  }, [authLoading, tenantId]);
   const { data: settingsList = [] } = useFirestoreQuery<SettingsItem>(settingsQuery);
-  const settings = settingsList[0] || {}; // Mengambil dokumen pertama dari koleksi settings
+  const settings = settingsList[0] || {};
 
-  // Cek apakah nama yang diketik sudah terdaftar
   const matchedCustomer = useMemo(() => {
     if (!form.customerName.trim()) return null;
     return customers.find(
@@ -95,7 +104,7 @@ export default function OrdersPage() {
 
   const isRegisteredCustomer = Boolean(matchedCustomer);
 
-  // Fungsi Hubungkan/Putuskan Printer Thermal (Web Serial / Bluetooth)
+  // Fungsi Hubungkan/Putuskan Printer Thermal
   const handleConnectPrinter = async () => {
     if (isPrinterConnected) {
       if (printerPort && printerPort.close) {
@@ -128,33 +137,32 @@ export default function OrdersPage() {
     }
   };
 
-  // Fungsi Cetak Otomatis Langsung ke Printer Tanpa Modal Preview Browser
   const printDirectToPrinter = async (orderData: Order, storeSettings: SettingsItem) => {
     if (!printerPort) return;
 
     try {
       const encoder = new TextEncoder();
       const receiptText =
-        `\x1b\x40` + // Reset/Init Printer
-        `\x1b\x61\x01` + // Align Center
+        `\x1b\x40` +
+        `\x1b\x61\x01` +
         `${storeSettings.storeName || "NOTA LAUNDRY"}\n` +
         `${storeSettings.storeAddress ? storeSettings.storeAddress + "\n" : ""}` +
         `${storeSettings.storePhone ? "Telp/WA: " + storeSettings.storePhone + "\n" : ""}` +
         `--------------------------------\n` +
-        `\x1b\x61\x00` + // Align Left
+        `\x1b\x61\x00` +
         `No. Order: #${orderData.orderNumber}\n` +
         `Pelanggan: ${orderData.customerName}\n` +
         (orderData.customerPhone ? `No. HP   : ${orderData.customerPhone}\n` : "") +
         `--------------------------------\n` +
         `${orderData.serviceName} (${orderData.weightQty} Kg)\n` +
-        `Total     : Rp ${(orderData.totalAmount || 0).toLocaleString("id-ID")}\n` +
+        `Total    : Rp ${(orderData.totalAmount || 0).toLocaleString("id-ID")}\n` +
         `--------------------------------\n` +
         `Status Bayar: ${orderData.paymentStatus}\n` +
         (orderData.notes ? `Catatan: ${orderData.notes}\n` : "") +
         `--------------------------------\n` +
-        `\x1b\x61\x01` + // Align Center
+        `\x1b\x61\x01` +
         `${storeSettings.receiptFooter || "Terima kasih atas kunjungan Anda!"}\n\n\n\n` +
-        `\x1d\x56\x41\x03`; // Cut Paper Command
+        `\x1d\x56\x41\x03`;
 
       const data = encoder.encode(receiptText);
 
@@ -168,7 +176,6 @@ export default function OrdersPage() {
     }
   };
 
-  // Handler saat Nama Pelanggan diketik / dipilih
   const handleCustomerNameChange = (name: string) => {
     const matched = customers.find(
       (c) => c.name?.toLowerCase() === name.trim().toLowerCase()
@@ -189,7 +196,6 @@ export default function OrdersPage() {
     }
   };
 
-  // Ubah status pesanan di Firestore
   const handleStatusChange = async (orderId: string, newStatus: string) => {
     try {
       await updateDoc(doc(db, "orders", orderId), { status: newStatus });
@@ -198,7 +204,6 @@ export default function OrdersPage() {
     }
   };
 
-  // Handler saat layanan dipilih (Otomatis hitung total)
   const handleServiceChange = (serviceName: string) => {
     const selected = services.find((s) => s.name === serviceName);
     const price = selected?.price || 0;
@@ -211,7 +216,6 @@ export default function OrdersPage() {
     }));
   };
 
-  // Handler saat berat/qty diubah (Otomatis hitung total)
   const handleWeightChange = (weightQty: number) => {
     setForm((prev) => ({
       ...prev,
@@ -220,9 +224,12 @@ export default function OrdersPage() {
     }));
   };
 
-  // Simpan Pesanan Baru & Otomatis Tambah Pelanggan jika Baru + Trigger Cetak Struk
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!tenantId) {
+      alert("Tenant ID tidak ditemukan. Silakan login ulang.");
+      return;
+    }
     if (!form.serviceName) {
       alert("Silakan pilih Layanan terlebih dahulu!");
       return;
@@ -231,17 +238,16 @@ export default function OrdersPage() {
     try {
       const finalCustomerName = form.customerName.trim() || "Pelanggan Umum";
 
-      // 1. Jika nama diisi & BELUM terdaftar, simpan otomatis sebagai Pelanggan Baru
       if (finalCustomerName !== "Pelanggan Umum" && !isRegisteredCustomer) {
         await addDoc(collection(db, "customers"), {
           name: finalCustomerName,
           phone: form.customerPhone.trim(),
           address: form.customerAddress.trim(),
+          tenantId: tenantId,
           createdAt: serverTimestamp(),
         });
       }
 
-      // Buat objek data order baru
       const newOrderData = {
         ...form,
         customerName: finalCustomerName,
@@ -249,16 +255,13 @@ export default function OrdersPage() {
         totalAmount: Number(form.totalAmount),
         orderNumber: `CE-${Math.floor(1000 + Math.random() * 9000)}`,
         status: "Baru",
+        tenantId: tenantId,
         createdAt: serverTimestamp(),
       };
 
-      // 2. Simpan Pesanan ke Firestore
       await addDoc(collection(db, "orders"), newOrderData);
-
-      // 3. Set data order untuk cetak
       setPrintOrder(newOrderData);
 
-      // 4. Otomatis Cetak Langsung HANYA saat Printer Sudah Terhubung (Tanpa preview print window.print)
       if (isPrinterConnected && printerPort) {
         await printDirectToPrinter(newOrderData, settings);
       }
@@ -280,10 +283,17 @@ export default function OrdersPage() {
     }
   };
 
+  if (authLoading || !tenantId) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 animate-spin text-sky-600" />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Manajemen Pesanan (POS)</h1>
@@ -291,7 +301,6 @@ export default function OrdersPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Indikator Status & Tombol Koneksi Printer */}
             <button
               onClick={handleConnectPrinter}
               className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 border transition-all ${
@@ -328,7 +337,6 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        {/* Tabel Data Pesanan */}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
           {loading ? (
             <div className="p-8 text-center text-slate-500">Memuat data pesanan...</div>
@@ -401,7 +409,6 @@ export default function OrdersPage() {
             </div>
             
             <form onSubmit={handleCreateOrder} className="space-y-4 text-sm">
-              {/* INPUT NAMA PELANGGAN */}
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-xs font-semibold text-slate-600">
@@ -440,7 +447,6 @@ export default function OrdersPage() {
                 </datalist>
               </div>
 
-              {/* INPUT NO HP & ALAMAT */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">No. HP / WhatsApp</label>
@@ -464,7 +470,6 @@ export default function OrdersPage() {
                 </div>
               </div>
 
-              {/* DROPDOWN LAYANAN */}
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Layanan</label>
                 <select
@@ -518,7 +523,6 @@ export default function OrdersPage() {
                 </select>
               </div>
 
-              {/* INPUT CATATAN */}
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">
                   Catatan <span className="text-slate-400 font-normal">(Opsional)</span>
@@ -549,13 +553,12 @@ export default function OrdersPage() {
         </div>
       )}
 
-      {/* ELEMEN STRUK UNTUK CETAK THERMAL (Sembunyi di Layar, Tampil Saat Cetak) */}
+      {/* ELEMEN STRUK UNTUK CETAK THERMAL */}
       {printOrder && (
         <div
           id="printable-receipt"
           className="hidden print:block p-2 text-black font-mono text-xs w-[58mm] mx-auto"
         >
-          {/* Header Toko dari Firestore Pengaturan */}
           <div className="text-center font-bold text-sm mb-0.5 uppercase">
             {settings.storeName || "NOTA LAUNDRY"}
           </div>
@@ -613,7 +616,6 @@ export default function OrdersPage() {
 
           <div className="border-b border-dashed border-black my-1" />
 
-          {/* Footer Struk dari Firestore Pengaturan */}
           <div className="text-center mt-3 text-[10px]">
             {settings.receiptFooter || "Terima kasih atas kunjungan Anda!"}
           </div>
